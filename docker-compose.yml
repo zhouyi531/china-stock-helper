@@ -1,0 +1,21 @@
+services:
+  app:
+    build: .
+    image: china-a-shares-helper
+    container_name: a-shares-helper
+    restart: unless-stopped
+    # Proper PID 1 so SIGTERM reaches the server for a clean shutdown.
+    init: true
+    ports:
+      - "8787:8787"
+    # Put OPENAI_API_KEY / TUSHARE_TOKEN / etc. in a root .env (cp .env.example .env).
+    env_file:
+      - .env
+    environment:
+      # Single port: the backend serves both the API/WS and the web UI.
+      PORT: "8787"
+      DB_PATH: /app/data/app.sqlite
+      TZ: Asia/Shanghai
+    volumes:
+      # Persist SQLite (watchlist / positions / AI history) across restarts.
+      - ./data:/app/data
