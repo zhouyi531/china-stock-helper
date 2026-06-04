@@ -1,5 +1,6 @@
 import path from "node:path";
 import fs from "node:fs";
+import { timingSafeEqual } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import Fastify from "fastify";
 import cors from "@fastify/cors";
@@ -15,6 +16,30 @@ import { registerMarketRoutes } from "./routes/market.js";
 import { registerAiRoutes } from "./routes/ai.js";
 
 const app = Fastify({ logger: { level: "info" } });
+
+// Gate the entire site (page + API + WS) behind HTTP Basic Auth when a
+// password is configured. Browsers cache the credentials per origin and
+// reattach them to subsequent fetch/EventSource/WebSocket requests.
+if (config.auth.password) {
+  const eq = (a: string, b: string): boolean => {
+    const ab = Buffer.from(a);
+    const bb = Buffer.from(b);
+    return ab.length === bb.length && timingSafeEqual(ab, bb);
+  };
+  app.addHook("onRequest", async (req, reply) => {
+    const header = req.headers.authorization;
+    if (header?.startsWith("Basic ")) {
+      const decoded = Buffer.from(header.slice(6), "base64").toString("utf8");
+      const i = decoded.indexOf(":");
+      const user = decoded.slice(0, i);
+      const pass = decoded.slice(i + 1);
+      if (eq(user, config.auth.username) && eq(pass, config.auth.password)) return;
+    }
+    reply.header("WWW-Authenticate", 'Basic realm="A-market", charset="UTF-8"');
+    return reply.code(401).send({ error: "Unauthorized" });
+  });
+  app.log.info("Access password enabled (HTTP Basic Auth)");
+}
 
 await app.register(cors, { origin: true });
 await app.register(websocket);

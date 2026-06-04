@@ -1,4 +1,6 @@
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { AiAnalysisRecord, AiMode } from "../types";
 import type { AiStreamState } from "../hooks/useAiStream";
 import { getAiHistory } from "../api/rest";
@@ -91,17 +93,22 @@ export function AiPanel({
 
       <div
         className={cls(
-          "min-h-[120px] whitespace-pre-wrap rounded border border-edge/60 bg-[#0b1119] p-3 text-[13px] leading-relaxed",
+          "min-h-[120px] rounded border border-edge/60 bg-[#0b1119] p-3 text-[13px] leading-relaxed",
           ai.status === "error" ? "text-down" : "text-slate-200"
         )}
       >
-        {ai.status === "error"
-          ? ai.error
-          : ai.text ||
-            (ai.status === "streaming"
-              ? "正在请求 AI…"
-              : "点击「运行 AI 分析」，将该股票的关键指标、市场 regime、板块强度与持仓/离场状态发送给 AI 进行研判。")}
-        {ai.status === "streaming" && <span className="ml-0.5 animate-pulse">▋</span>}
+        {ai.status === "error" ? (
+          ai.error
+        ) : ai.text ? (
+          <div className="prose prose-invert prose-sm max-w-none prose-headings:mb-1 prose-headings:mt-2 prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-pre:my-2">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{ai.text}</ReactMarkdown>
+            {ai.status === "streaming" && <span className="ml-0.5 animate-pulse">▋</span>}
+          </div>
+        ) : ai.status === "streaming" ? (
+          "正在请求 AI…"
+        ) : (
+          "点击「运行 AI 分析」，将该股票的关键指标、市场 regime、板块强度与持仓/离场状态发送给 AI 进行研判。"
+        )}
       </div>
       <p className="mt-1 text-[11px] text-slate-600">AI 输出为量化研判参考，非投资建议。</p>
     </div>

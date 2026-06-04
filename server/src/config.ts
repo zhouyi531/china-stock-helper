@@ -27,6 +27,12 @@ export const config = {
     stopLossPct: num("EXIT_STOPLOSS_PCT", 0.03),
   },
 
+  // If password is set, the whole site (page + API + WS) requires HTTP Basic Auth.
+  auth: {
+    username: str("APP_USERNAME", "admin"),
+    password: str("APP_PASSWORD", ""),
+  },
+
   openai: {
     apiKey: str("OPENAI_API_KEY", ""),
     baseUrl: str("OPENAI_BASE_URL", "https://api.openai.com/v1"),
