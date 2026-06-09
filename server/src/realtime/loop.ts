@@ -1,7 +1,7 @@
 import { config } from "../config.js";
 import { appState } from "../state.js";
 import { getMarketClock, sessionElapsedFraction } from "../marketClock.js";
-import { fetchQuotes, fetchDaily, type DailyBar } from "../providers/index.js";
+import { fetchQuotes, fetchDaily, fetchFundFlow, type DailyBar } from "../providers/index.js";
 import { computeLayer1 } from "../indicators/layer1.js";
 import { fetchRegime } from "../regime/layer2.js";
 import { sectorService } from "../sector/layer3.js";
@@ -14,11 +14,24 @@ import {
   updateWatchName,
 } from "../store/db.js";
 import { hub } from "./hub.js";
-import type { FullSnapshot, Quote, StockSnapshot, Symbol } from "../types.js";
+import type { FullSnapshot, FundFlow, Quote, StockSnapshot, Symbol } from "../types.js";
 
 const MOMENTUM_WINDOW_MS = 5 * 60 * 1000;
 const DAILY_TTL_MS = 5 * 60 * 1000;
 const STALE_AFTER_MS = 60 * 1000;
+const FUNDFLOW_TTL_MS = 12 * 1000;
+
+let fundFlowCache: { ts: number; map: Map<Symbol, FundFlow> } = { ts: 0, map: new Map() };
+
+/** Bulk main-force net inflow, cached briefly (changes slowly intraday). */
+async function getFundFlow(symbols: Symbol[]): Promise<Map<Symbol, FundFlow>> {
+  if (fundFlowCache.map.size && Date.now() - fundFlowCache.ts < FUNDFLOW_TTL_MS) {
+    return fundFlowCache.map;
+  }
+  const map = await fetchFundFlow(symbols);
+  if (map.size) fundFlowCache = { ts: Date.now(), map };
+  return fundFlowCache.map;
+}
 
 interface TickPoint {
   t: number;
@@ -52,7 +65,13 @@ function refreshDailyIfNeeded(symbol: Symbol): void {
     .finally(() => dailyInflight.delete(symbol));
 }
 
-function buildStockSnapshot(symbol: Symbol, name: string, quote: Quote | undefined, open: boolean): StockSnapshot {
+function buildStockSnapshot(
+  symbol: Symbol,
+  name: string,
+  quote: Quote | undefined,
+  open: boolean,
+  fundFlow: FundFlow | null = null
+): StockSnapshot {
   const market = symbol.slice(0, 2) as StockSnapshot["market"];
   const code = symbol.slice(2);
   const base: StockSnapshot = {
@@ -62,6 +81,7 @@ function buildStockSnapshot(symbol: Symbol, name: string, quote: Quote | undefin
     market,
     quote: null,
     layer1: null,
+    fundFlow,
     sector: null,
     position: null,
     exit: null,
@@ -98,7 +118,7 @@ function buildStockSnapshot(symbol: Symbol, name: string, quote: Quote | undefin
       prev ? { kind: prev.kind, peak: prev.peak } : null,
       position.entryPrice,
       quote.price,
-      { trailPct: config.exit.trailPct, stopLossPct: config.exit.stopLossPct }
+      { trailPct: position.trailPct, stopLossPct: position.stopLossPct }
     );
     st.symbol = symbol;
     saveExitRow(symbol, st.kind, st.peak);
@@ -112,28 +132,37 @@ async function tickQuotes(): Promise<void> {
   const watch = listWatch();
   const clock = getMarketClock();
   if (watch.length === 0) {
-    const snap: FullSnapshot = { clock, stocks: [], regime: appState.latestRegime, ts: Date.now() };
+    const snap: FullSnapshot = {
+      clock,
+      stocks: [],
+      regime: appState.latestRegime,
+      exitDefaults: { trailPct: config.exit.trailPct, stopLossPct: config.exit.stopLossPct },
+      ts: Date.now(),
+    };
     appState.latestSnapshot = snap;
     hub.broadcast({ type: "tick", data: snap });
     return;
   }
 
   const symbols = watch.map((w) => w.symbol);
+  const fundFlowP = getFundFlow(symbols);
   let quotes = new Map<Symbol, Quote>();
   try {
     quotes = await fetchQuotes(symbols);
   } catch {
     // degraded: keep building with missing quotes
   }
+  const fundFlow = await fundFlowP;
 
   const stocks = watch.map((w) =>
-    buildStockSnapshot(w.symbol, w.name, quotes.get(w.symbol), clock.open)
+    buildStockSnapshot(w.symbol, w.name, quotes.get(w.symbol), clock.open, fundFlow.get(w.symbol) ?? null)
   );
 
   const snap: FullSnapshot = {
     clock,
     stocks,
     regime: appState.latestRegime,
+    exitDefaults: { trailPct: config.exit.trailPct, stopLossPct: config.exit.stopLossPct },
     ts: Date.now(),
   };
   appState.latestSnapshot = snap;

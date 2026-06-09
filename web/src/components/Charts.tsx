@@ -9,17 +9,21 @@ import type { KlineResponse } from "../types";
 
 const CHART_OPTS = {
   layout: {
-    background: { type: ColorType.Solid, color: "#0b1119" },
-    textColor: "#7d8da0",
+    background: { type: ColorType.Solid, color: "#ffffff" },
+    textColor: "#64748b",
     fontSize: 11,
   },
   grid: {
-    vertLines: { color: "#1a2430" },
-    horzLines: { color: "#1a2430" },
+    vertLines: { color: "#eef2f7" },
+    horzLines: { color: "#eef2f7" },
   },
-  rightPriceScale: { borderColor: "#243140" },
-  timeScale: { borderColor: "#243140" },
+  rightPriceScale: { borderColor: "#cbd5e1" },
+  // rightOffset keeps the latest bar away from the price-axis labels so it isn't
+  // visually clipped at the default zoom.
+  timeScale: { borderColor: "#cbd5e1", rightOffset: 6 },
   crosshair: { mode: 0 as const },
+  // Native wheel behaviour: hovering the chart zooms it; moving the cursor off
+  // the chart lets the surrounding drawer scroll normally.
 };
 
 function DailyChart({ data }: { data: KlineResponse }) {
@@ -80,10 +84,10 @@ function DailyChart({ data }: { data: KlineResponse }) {
   return (
     <div>
       <div className="mb-1 flex items-center gap-3 text-[11px]">
-        <span className="text-slate-400">日K (前复权)</span>
-        <span className="text-yellow-500">MA5</span>
-        <span className="text-sky-400">MA10</span>
-        <span className="text-purple-400">MA20</span>
+        <span className="text-slate-600">日K (前复权)</span>
+        <span className="text-yellow-600">MA5</span>
+        <span className="text-sky-600">MA10</span>
+        <span className="text-purple-600">MA20</span>
       </div>
       <div ref={ref} className="w-full" />
     </div>
@@ -110,7 +114,7 @@ function MinuteChart({ data }: { data: KlineResponse }) {
       return (Date.UTC(y, m - 1, d, hh, mm) / 1000) as UTCTimestamp;
     };
 
-    const price = chart.addLineSeries({ color: "#e2e8f0", lineWidth: 1, priceLineVisible: false });
+    const price = chart.addLineSeries({ color: "#334155", lineWidth: 1, priceLineVisible: false });
     const vwap = chart.addLineSeries({ color: "#f59e0b", lineWidth: 1, priceLineVisible: false });
 
     price.setData(data.minute.map((p) => ({ time: toTime(p.time), value: p.price })));
@@ -136,8 +140,8 @@ function MinuteChart({ data }: { data: KlineResponse }) {
   return (
     <div>
       <div className="mb-1 flex items-center gap-3 text-[11px]">
-        <span className="text-slate-400">分时</span>
-        <span className="text-slate-200">价格</span>
+        <span className="text-slate-600">分时</span>
+        <span className="text-slate-800">价格</span>
         <span className="text-amber-500">VWAP/均价</span>
       </div>
       <div ref={ref} className="w-full" />
@@ -147,10 +151,10 @@ function MinuteChart({ data }: { data: KlineResponse }) {
 
 export function Charts({ data }: { data: KlineResponse | null }) {
   if (!data) {
-    return <div className="py-10 text-center text-sm text-slate-600">K线加载中…</div>;
+    return <div className="py-10 text-center text-sm text-slate-400">K线加载中…</div>;
   }
   if (data.daily.length === 0 && data.minute.length === 0) {
-    return <div className="py-10 text-center text-sm text-slate-600">暂无K线数据</div>;
+    return <div className="py-10 text-center text-sm text-slate-400">暂无K线数据</div>;
   }
   return (
     <div className="space-y-4">

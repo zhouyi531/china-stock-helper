@@ -137,6 +137,10 @@ export interface Position {
   symbol: string;
   entryPrice: number;
   shares: number | null;
+  /** trailing take-profit drawdown, fraction (e.g. 0.0015) */
+  trailPct: number;
+  /** stop-loss distance below entry, fraction (e.g. 0.03) */
+  stopLossPct: number;
   createdAt: number;
 }
 
@@ -152,6 +156,14 @@ export interface ExitState {
   updatedAt: number;
 }
 
+export interface FundFlow {
+  /** 主力净流入净额, 元 (positive = 净流入) */
+  mainNetInflow: number;
+  /** 主力净流入净占比, % */
+  mainNetRatio: number;
+  available: boolean;
+}
+
 export interface StockSnapshot {
   symbol: string;
   code: string;
@@ -159,6 +171,7 @@ export interface StockSnapshot {
   market: Market;
   quote: Quote | null;
   layer1: Layer1Metrics | null;
+  fundFlow: FundFlow | null;
   sector: StockSectorInfo | null;
   position: Position | null;
   exit: ExitState | null;
@@ -172,10 +185,16 @@ export interface MarketClock {
   label: string;
 }
 
+export interface ExitDefaults {
+  trailPct: number;
+  stopLossPct: number;
+}
+
 export interface FullSnapshot {
   clock: MarketClock;
   stocks: StockSnapshot[];
   regime: Regime | null;
+  exitDefaults: ExitDefaults;
   ts: number;
 }
 

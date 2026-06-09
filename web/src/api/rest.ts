@@ -29,13 +29,20 @@ export async function removeStock(symbol: string): Promise<void> {
 export async function setPosition(
   symbol: string,
   entryPrice: number,
-  shares?: number | null
+  shares?: number | null,
+  trailPct?: number | null,
+  stopLossPct?: number | null
 ): Promise<void> {
   await jsonOrThrow(
     await fetch(`/api/positions/${symbol}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ entryPrice, shares: shares ?? null }),
+      body: JSON.stringify({
+        entryPrice,
+        shares: shares ?? null,
+        trailPct: trailPct ?? null,
+        stopLossPct: stopLossPct ?? null,
+      }),
     })
   );
 }

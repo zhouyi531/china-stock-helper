@@ -42,6 +42,16 @@ CREATE TABLE IF NOT EXISTS ai_analysis (
 CREATE INDEX IF NOT EXISTS idx_ai_symbol ON ai_analysis(symbol, created_at DESC);
 `);
 
+// Per-position exit overrides, added after the initial release. ALTER throws if
+// the column already exists, so guard each one for idempotent startup.
+for (const col of ["trail_pct", "stop_loss_pct"]) {
+  try {
+    db.exec(`ALTER TABLE positions ADD COLUMN ${col} REAL`);
+  } catch {
+    // column already present
+  }
+}
+
 // ---- Watchlist ----
 
 export interface WatchRow {
@@ -90,11 +100,20 @@ interface PosRow {
   symbol: Symbol;
   entry_price: number;
   shares: number | null;
+  trail_pct: number | null;
+  stop_loss_pct: number | null;
   created_at: number;
 }
 
 function toPosition(r: PosRow): Position {
-  return { symbol: r.symbol, entryPrice: r.entry_price, shares: r.shares, createdAt: r.created_at };
+  return {
+    symbol: r.symbol,
+    entryPrice: r.entry_price,
+    shares: r.shares,
+    trailPct: r.trail_pct ?? config.exit.trailPct,
+    stopLossPct: r.stop_loss_pct ?? config.exit.stopLossPct,
+    createdAt: r.created_at,
+  };
 }
 
 export function getPosition(symbol: Symbol): Position | null {
@@ -106,15 +125,29 @@ export function listPositions(): Position[] {
   return (db.prepare("SELECT * FROM positions").all() as PosRow[]).map(toPosition);
 }
 
-export function setPosition(symbol: Symbol, entryPrice: number, shares: number | null): Position {
+export function setPosition(
+  symbol: Symbol,
+  entryPrice: number,
+  shares: number | null,
+  trailPct: number | null = null,
+  stopLossPct: number | null = null
+): Position {
   const now = Date.now();
+  const prev = getPosition(symbol);
   db.prepare(
-    `INSERT INTO positions (symbol, entry_price, shares, created_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(symbol) DO UPDATE SET entry_price=excluded.entry_price, shares=excluded.shares`
-  ).run(symbol, entryPrice, shares, now);
-  // reset exit-state tracking to a fresh watch
-  db.prepare("DELETE FROM exit_state WHERE symbol=?").run(symbol);
+    `INSERT INTO positions (symbol, entry_price, shares, trail_pct, stop_loss_pct, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(symbol) DO UPDATE SET
+       entry_price=excluded.entry_price,
+       shares=excluded.shares,
+       trail_pct=excluded.trail_pct,
+       stop_loss_pct=excluded.stop_loss_pct`
+  ).run(symbol, entryPrice, shares, trailPct, stopLossPct, now);
+  // Reset peak tracking only when the entry price changes; editing the stop
+  // ratios alone should preserve the recorded peak.
+  if (!prev || prev.entryPrice !== entryPrice) {
+    db.prepare("DELETE FROM exit_state WHERE symbol=?").run(symbol);
+  }
   return getPosition(symbol)!;
 }
 

@@ -1,6 +1,6 @@
 import { fetchJson, toNum } from "./http.js";
 import { toEastMoneySecid } from "../symbols.js";
-import type { SectorBoard, SectorRef, Symbol } from "../types.js";
+import type { FundFlow, SectorBoard, SectorRef, Symbol } from "../types.js";
 
 const EM_HEADERS = { Referer: "https://quote.eastmoney.com/" };
 const UT = "fa5fd1943c7b386f172d6893dbfba10b";
@@ -58,6 +58,48 @@ export async function fetchEastMoneyBoards(
       available: true,
     };
   });
+}
+
+/**
+ * Main-force net inflow per stock via the bulk ulist endpoint — the free
+ * eastmoney 资金流 stand-in for DDE净量. One request covers the whole watchlist.
+ *   f12  = code, f13 = market id (1=sh, 0=sz/bj)
+ *   f62  = 主力净流入净额 (元)
+ *   f184 = 主力净流入净占比 (%)
+ * NOTE: field semantics confirmed against eastmoney's public 资金流 ranking;
+ * verify once on a host with eastmoney access. Degrades to an empty map.
+ */
+export async function fetchEastMoneyFundFlow(
+  symbols: Symbol[]
+): Promise<Map<Symbol, FundFlow>> {
+  const out = new Map<Symbol, FundFlow>();
+  if (symbols.length === 0) return out;
+
+  const secidToSymbol = new Map<string, Symbol>();
+  for (const s of symbols) secidToSymbol.set(toEastMoneySecid(s), s);
+  const secids = [...secidToSymbol.keys()].join(",");
+  const url =
+    `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids=${secids}` +
+    `&fields=f12,f13,f62,f184&ut=${UT}`;
+
+  try {
+    const json = await fetchJson<any>(url, { headers: EM_HEADERS, timeoutMs: 8000 });
+    const diff = json?.data?.diff;
+    const rows: any[] = Array.isArray(diff) ? diff : diff ? Object.values(diff) : [];
+    for (const r of rows) {
+      const sym = secidToSymbol.get(`${r.f13}.${r.f12}`);
+      if (!sym) continue;
+      const hasData = r.f62 != null && r.f62 !== "-";
+      out.set(sym, {
+        mainNetInflow: toNum(r.f62),
+        mainNetRatio: toNum(r.f184),
+        available: hasData,
+      });
+    }
+  } catch {
+    // degraded: empty map -> callers treat as unavailable
+  }
+  return out;
 }
 
 export interface MarketBreadthRaw {

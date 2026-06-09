@@ -43,6 +43,16 @@ function fmt(n: number | null | undefined, dp = 2, suffix = ""): string {
   return `${n.toFixed(dp)}${suffix}`;
 }
 
+/** Signed 元 -> readable 万/亿 for the LLM payload. */
+function fmtMoney(yuan: number | null | undefined): string {
+  if (yuan == null || !Number.isFinite(yuan)) return "—";
+  const sign = yuan > 0 ? "+" : yuan < 0 ? "-" : "";
+  const abs = Math.abs(yuan);
+  if (abs >= 1e8) return `${sign}${(abs / 1e8).toFixed(2)}亿`;
+  if (abs >= 1e4) return `${sign}${(abs / 1e4).toFixed(1)}万`;
+  return `${sign}${abs.toFixed(0)}`;
+}
+
 /** Build the dynamic, per-request payload (placed AFTER the static prefix). */
 export function buildDynamicPayload(
   stock: StockSnapshot,
@@ -52,6 +62,7 @@ export function buildDynamicPayload(
   const q = stock.quote;
   const l = stock.layer1;
   const s = stock.sector;
+  const ff = stock.fundFlow;
   const lines: string[] = [];
 
   lines.push(`【分析模式】${mode === "entry" ? "无持仓 → 分析开仓时机" : "持仓中 → 分析离场时机"}`);
@@ -65,6 +76,9 @@ export function buildDynamicPayload(
         `VWAP/均价 ${fmt(l.vwap, 3)}，价对VWAP ${fmt(l.priceVsVwap, 2, "%")}`,
         `MA5/10/20 ${fmt(l.ma5)}/${fmt(l.ma10)}/${fmt(l.ma20)}`,
         `分钟动量 ${fmt(l.intradayMomentum, 2, "%")}，相对量能 ${fmt(l.relativeVolume, 2)}，换手率 ${fmt(l.turnoverRate, 2, "%")}`,
+        ff && ff.available
+          ? `主力净流入 ${fmtMoney(ff.mainNetInflow)}（净占比 ${fmt(ff.mainNetRatio, 2, "%")}，正=资金流入）`
+          : "主力净流入 数据不可用",
         `振幅 ${fmt(l.amplitude, 2, "%")}，波动率 ${fmt(l.volatility, 2, "%")}`,
         `距涨停 ${fmt(l.distanceToLimitUp, 2, "%")}，距跌停 ${fmt(l.distanceToLimitDown, 2, "%")}`,
         `买卖价差 ${fmt(l.bidAskSpread, 3, "%")}，盘口失衡 ${fmt(l.orderBookImbalance, 2)}（正=买盘占优）`,

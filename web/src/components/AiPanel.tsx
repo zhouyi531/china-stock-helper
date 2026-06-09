@@ -45,15 +45,15 @@ export function AiPanel({
   return (
     <div className="rounded-lg border border-edge bg-panel p-3">
       <div className="mb-2 flex items-center gap-2">
-        <h3 className="text-sm font-semibold text-slate-200">AI 走势分析</h3>
-        <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[11px] text-violet-300">
+        <h3 className="text-sm font-semibold text-slate-800">AI 走势分析</h3>
+        <span className="rounded bg-violet-500/20 px-1.5 py-0.5 text-[11px] text-violet-700">
           {MODE_LABEL[mode]}
         </span>
-        {ai.model && <span className="text-[11px] text-slate-600">{ai.model}</span>}
+        {ai.model && <span className="text-[11px] text-slate-400">{ai.model}</span>}
         <div className="ml-auto flex items-center gap-2">
           <button
             onClick={() => setShowHistory((v) => !v)}
-            className="rounded border border-edge px-2 py-1 text-xs text-slate-400 transition hover:bg-panelraised"
+            className="rounded border border-edge px-2 py-1 text-xs text-slate-600 transition hover:bg-panelraised"
           >
             历史 {history.length > 0 && `(${history.length})`}
           </button>
@@ -70,7 +70,7 @@ export function AiPanel({
       {showHistory && (
         <div className="mb-2 max-h-40 space-y-1 overflow-y-auto rounded border border-edge/60 bg-panelraised p-2">
           {history.length === 0 ? (
-            <p className="text-xs text-slate-600">暂无历史分析</p>
+            <p className="text-xs text-slate-400">暂无历史分析</p>
           ) : (
             history.map((h) => (
               <button
@@ -79,7 +79,7 @@ export function AiPanel({
                   ai.setText(h.content, h.mode);
                   setShowHistory(false);
                 }}
-                className="block w-full truncate rounded px-2 py-1 text-left text-xs text-slate-400 transition hover:bg-panel"
+                className="block w-full truncate rounded px-2 py-1 text-left text-xs text-slate-600 transition hover:bg-panel"
               >
                 <span className="text-slate-500">
                   {new Date(h.createdAt).toLocaleString("zh-CN", { hour12: false })}
@@ -93,14 +93,14 @@ export function AiPanel({
 
       <div
         className={cls(
-          "min-h-[120px] rounded border border-edge/60 bg-[#0b1119] p-3 text-[13px] leading-relaxed",
-          ai.status === "error" ? "text-down" : "text-slate-200"
+          "min-h-[120px] rounded border border-edge/60 bg-panelraised p-3 text-[13px] leading-relaxed",
+          ai.status === "error" ? "text-down" : "text-slate-800"
         )}
       >
         {ai.status === "error" ? (
           ai.error
         ) : ai.text ? (
-          <div className="prose prose-invert prose-sm max-w-none prose-headings:mb-1 prose-headings:mt-2 prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-pre:my-2">
+          <div className="prose prose-sm max-w-none prose-headings:mb-1 prose-headings:mt-2 prose-p:my-1.5 prose-ul:my-1.5 prose-ol:my-1.5 prose-li:my-0.5 prose-pre:my-2">
             <ReactMarkdown remarkPlugins={[remarkGfm]}>{ai.text}</ReactMarkdown>
             {ai.status === "streaming" && <span className="ml-0.5 animate-pulse">▋</span>}
           </div>
@@ -110,7 +110,7 @@ export function AiPanel({
           "点击「运行 AI 分析」，将该股票的关键指标、市场 regime、板块强度与持仓/离场状态发送给 AI 进行研判。"
         )}
       </div>
-      <p className="mt-1 text-[11px] text-slate-600">AI 输出为量化研判参考，非投资建议。</p>
+      <p className="mt-1 text-[11px] text-slate-400">AI 输出为量化研判参考，非投资建议。</p>
     </div>
   );
 }

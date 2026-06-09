@@ -44,12 +44,12 @@ export default function App() {
     <div className="mx-auto max-w-[1500px] p-4">
       <header className="mb-4 flex flex-wrap items-center gap-x-6 gap-y-3">
         <div className="flex items-center gap-3">
-          <h1 className="text-xl font-bold text-slate-100">A股看盘助手</h1>
+          <h1 className="text-xl font-bold text-slate-900">A股看盘助手</h1>
           {clock && (
             <span
               className={cls(
                 "rounded-md px-2 py-1 text-xs font-medium",
-                clock.open ? "bg-emerald-500/15 text-emerald-300" : "bg-slate-700/40 text-slate-400"
+                clock.open ? "bg-emerald-500/15 text-emerald-700" : "bg-slate-300/40 text-slate-600"
               )}
             >
               {clock.label}
@@ -75,18 +75,24 @@ export default function App() {
         <WatchlistTable
           stocks={stocks}
           selected={selected}
+          exitDefaults={snapshot?.exitDefaults ?? null}
           onSelect={onSelect}
           onAi={onAi}
           onRemove={onRemove}
         />
       )}
 
-      <footer className="mt-6 text-center text-[11px] text-slate-600">
+      <footer className="mt-6 text-center text-[11px] text-slate-400">
         数据来自腾讯/新浪/东方财富公开接口，可能延迟或有误。本工具仅供学习与个人辅助，不构成投资建议。
       </footer>
 
       {selectedStock && (
-        <StockDetailDrawer stock={selectedStock} ai={ai} onClose={() => setSelected(null)} />
+        <StockDetailDrawer
+          stock={selectedStock}
+          ai={ai}
+          exitDefaults={snapshot?.exitDefaults ?? null}
+          onClose={() => setSelected(null)}
+        />
       )}
     </div>
   );

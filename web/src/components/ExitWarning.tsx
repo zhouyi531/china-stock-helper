@@ -10,8 +10,8 @@ export function ExitWarning({ exit }: { exit: ExitState | null }) {
     k === "stop_loss_warn"
       ? "border-down/60 bg-down/15 text-down"
       : k === "take_profit_warn"
-        ? "border-amber-500/60 bg-amber-500/15 text-amber-200"
-        : "border-orange-500/40 bg-orange-500/10 text-orange-200";
+        ? "border-amber-500/60 bg-amber-500/15 text-amber-700"
+        : "border-orange-500/40 bg-orange-500/10 text-orange-700";
 
   const title =
     k === "stop_loss_warn" ? "止损离场警告" : k === "take_profit_warn" ? "止盈离场警告" : "已跌破成本价";

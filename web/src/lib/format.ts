@@ -19,7 +19,7 @@ export function fmtPct(n: number | null | undefined, dp = 2): string {
 
 /** A-share convention: red = up, green = down. */
 export function upDownClass(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n) || n === 0) return "text-slate-400";
+  if (n == null || !Number.isFinite(n) || n === 0) return "text-slate-600";
   return n > 0 ? "text-up" : "text-down";
 }
 
@@ -28,6 +28,16 @@ export function fmtAmount(yuan: number | null | undefined): string {
   if (yuan >= 1e8) return `${(yuan / 1e8).toFixed(2)}亿`;
   if (yuan >= 1e4) return `${(yuan / 1e4).toFixed(1)}万`;
   return `${yuan.toFixed(0)}`;
+}
+
+/** Signed 元 amount (e.g. main-force net inflow) -> ±万/亿. */
+export function fmtMoneySigned(yuan: number | null | undefined): string {
+  if (yuan == null || !Number.isFinite(yuan)) return "—";
+  const sign = yuan > 0 ? "+" : yuan < 0 ? "-" : "";
+  const abs = Math.abs(yuan);
+  if (abs >= 1e8) return `${sign}${(abs / 1e8).toFixed(2)}亿`;
+  if (abs >= 1e4) return `${sign}${(abs / 1e4).toFixed(1)}万`;
+  return `${sign}${abs.toFixed(0)}`;
 }
 
 /** volume is in 手 (lots); render in 手/万手. */

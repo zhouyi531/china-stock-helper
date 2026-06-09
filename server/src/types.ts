@@ -151,6 +151,10 @@ export interface Position {
   entryPrice: number;
   /** optional share count for P/L money calc */
   shares: number | null;
+  /** trailing take-profit drawdown, fraction (e.g. 0.0015). Falls back to config default. */
+  trailPct: number;
+  /** stop-loss distance below entry, fraction (e.g. 0.03). Falls back to config default. */
+  stopLossPct: number;
   createdAt: number;
 }
 
@@ -169,6 +173,18 @@ export interface ExitState {
 }
 
 /** What the frontend renders per watched stock. */
+/**
+ * Main-force money flow. A free eastmoney 资金流 approximation of DDE净量 (true
+ * DDE needs Level-2 tick data, unavailable on public feeds).
+ */
+export interface FundFlow {
+  /** 主力净流入净额, 元 (positive = 净流入) */
+  mainNetInflow: number;
+  /** 主力净流入净占比, % */
+  mainNetRatio: number;
+  available: boolean;
+}
+
 export interface StockSnapshot {
   symbol: Symbol;
   code: string;
@@ -176,6 +192,7 @@ export interface StockSnapshot {
   market: Market;
   quote: Quote | null;
   layer1: Layer1Metrics | null;
+  fundFlow: FundFlow | null;
   sector: StockSectorInfo | null;
   position: Position | null;
   exit: ExitState | null;
@@ -189,10 +206,17 @@ export interface MarketClock {
   label: string;
 }
 
+export interface ExitDefaults {
+  trailPct: number;
+  stopLossPct: number;
+}
+
 export interface FullSnapshot {
   clock: MarketClock;
   stocks: StockSnapshot[];
   regime: Regime | null;
+  /** server defaults for new positions (config-driven) */
+  exitDefaults: ExitDefaults;
   ts: number;
 }
 

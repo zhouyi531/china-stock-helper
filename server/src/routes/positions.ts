@@ -6,6 +6,9 @@ import { normalizeSymbol } from "../symbols.js";
 const setBody = z.object({
   entryPrice: z.number().positive(),
   shares: z.number().positive().nullable().optional(),
+  // exit overrides as fractions (e.g. 0.0015, 0.03); null -> use server default
+  trailPct: z.number().positive().max(1).nullable().optional(),
+  stopLossPct: z.number().positive().max(1).nullable().optional(),
 });
 
 export function registerPositionRoutes(app: FastifyInstance): void {
@@ -19,7 +22,13 @@ export function registerPositionRoutes(app: FastifyInstance): void {
     const parsed = setBody.safeParse(req.body);
     if (!parsed.success) return reply.code(400).send({ error: "进场价无效" });
 
-    const pos = setPosition(symbol, parsed.data.entryPrice, parsed.data.shares ?? null);
+    const pos = setPosition(
+      symbol,
+      parsed.data.entryPrice,
+      parsed.data.shares ?? null,
+      parsed.data.trailPct ?? null,
+      parsed.data.stopLossPct ?? null
+    );
     return { position: pos };
   });
 

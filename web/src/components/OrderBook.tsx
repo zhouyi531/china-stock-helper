@@ -25,7 +25,7 @@ function Row({
       />
       <span className="relative z-10 text-slate-500">{label}</span>
       <span className={cls("relative z-10", textColor)}>{price > 0 ? fmt(price, 3) : "—"}</span>
-      <span className="relative z-10 w-16 text-right text-slate-400">{volume || "—"}</span>
+      <span className="relative z-10 w-16 text-right text-slate-600">{volume || "—"}</span>
     </div>
   );
 }
@@ -51,7 +51,7 @@ export function OrderBook({ quote }: { quote: Quote }) {
           .map(({ a, i }) => (
             <Row key={`a${i}`} label={`卖${i + 1}`} price={a.price} volume={a.volume} max={max} side="ask" />
           ))}
-        <div className="px-2 py-1 text-center text-xs text-slate-600">— 委托盘口 (手) —</div>
+        <div className="px-2 py-1 text-center text-xs text-slate-400">— 委托盘口 (手) —</div>
         {bids.map((b, i) => (
           <Row key={`b${i}`} label={`买${i + 1}`} price={b.price} volume={b.volume} max={max} side="bid" />
         ))}

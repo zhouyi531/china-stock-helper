@@ -3,7 +3,7 @@ import { config } from "../config.js";
 import { appState } from "../state.js";
 import { normalizeSymbol } from "../symbols.js";
 import { sessionElapsedFraction } from "../marketClock.js";
-import { fetchQuotes, fetchDaily } from "../providers/index.js";
+import { fetchQuotes, fetchDaily, fetchFundFlow } from "../providers/index.js";
 import { computeLayer1 } from "../indicators/layer1.js";
 import { sectorService } from "../sector/layer3.js";
 import { stepExit } from "../exit/engine.js";
@@ -28,6 +28,7 @@ async function getStockForAi(symbol: Symbol): Promise<StockSnapshot | null> {
     elapsedFraction: sessionElapsedFraction(),
   });
   const sector = sectorService.getStockSector(symbol);
+  const fundFlow = (await fetchFundFlow([symbol]).catch(() => new Map())).get(symbol) ?? null;
   const position = getPosition(symbol);
   let exit = null;
   if (position) {
@@ -36,7 +37,7 @@ async function getStockForAi(symbol: Symbol): Promise<StockSnapshot | null> {
       prev ? { kind: prev.kind, peak: prev.peak } : null,
       position.entryPrice,
       q.price,
-      { trailPct: config.exit.trailPct, stopLossPct: config.exit.stopLossPct }
+      { trailPct: position.trailPct, stopLossPct: position.stopLossPct }
     );
     st.symbol = symbol;
     exit = st;
@@ -48,6 +49,7 @@ async function getStockForAi(symbol: Symbol): Promise<StockSnapshot | null> {
     market: symbol.slice(0, 2) as StockSnapshot["market"],
     quote: q,
     layer1,
+    fundFlow,
     sector,
     position,
     exit,

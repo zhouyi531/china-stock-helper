@@ -10,12 +10,12 @@ export const EXIT_LABEL: Record<ExitStateKind, string> = {
 };
 
 export const EXIT_BADGE: Record<ExitStateKind, string> = {
-  none: "bg-slate-700/40 text-slate-400",
-  watching: "bg-sky-500/15 text-sky-300",
-  take_profit_warn: "bg-amber-500/20 text-amber-300",
-  stop_loss_watch: "bg-orange-500/15 text-orange-300",
+  none: "bg-slate-300/40 text-slate-600",
+  watching: "bg-sky-500/15 text-sky-700",
+  take_profit_warn: "bg-amber-500/20 text-amber-700",
+  stop_loss_watch: "bg-orange-500/15 text-orange-700",
   stop_loss_warn: "bg-down/25 text-down",
-  exited: "bg-slate-700/40 text-slate-400",
+  exited: "bg-slate-300/40 text-slate-600",
 };
 
 export function isExitWarning(kind: ExitStateKind): boolean {
@@ -31,5 +31,5 @@ export const TREND_LABEL: Record<TrendTag, string> = {
 export const TREND_BADGE: Record<TrendTag, string> = {
   bull: "bg-up/20 text-up",
   bear: "bg-down/20 text-down",
-  neutral: "bg-slate-600/30 text-slate-300",
+  neutral: "bg-slate-400/30 text-slate-700",
 };

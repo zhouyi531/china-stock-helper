@@ -29,7 +29,7 @@ export function AddStock({ onAdded }: { onAdded: (symbol: string) => void }) {
         value={code}
         onChange={(e) => setCode(e.target.value)}
         placeholder="输入股票代码，如 600000 / sz000001 / 300750"
-        className="w-72 rounded-md border border-edge bg-panelraised px-3 py-2 text-sm outline-none placeholder:text-slate-600 focus:border-sky-500"
+        className="w-72 rounded-md border border-edge bg-panelraised px-3 py-2 text-sm outline-none placeholder:text-slate-400 focus:border-sky-500"
       />
       <button
         type="submit"

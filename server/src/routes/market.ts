@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { config } from "../config.js";
 import { appState } from "../state.js";
 import { getMarketClock } from "../marketClock.js";
 import { sectorService } from "../sector/layer3.js";
@@ -25,6 +26,7 @@ export function registerMarketRoutes(app: FastifyInstance): void {
         clock: getMarketClock(),
         stocks: [],
         regime: null,
+        exitDefaults: { trailPct: config.exit.trailPct, stopLossPct: config.exit.stopLossPct },
         ts: Date.now(),
       }
     );
