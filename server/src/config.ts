@@ -8,6 +8,13 @@ function num(name: string, fallback: number): number {
   return Number.isFinite(n) ? n : fallback;
 }
 
+function numOrNull(name: string): number | null {
+  const v = process.env[name];
+  if (v == null || v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? n : null;
+}
+
 function str(name: string, fallback: string): string {
   const v = process.env[name];
   return v == null || v === "" ? fallback : v;
@@ -23,7 +30,12 @@ export const config = {
   },
 
   exit: {
-    trailPct: num("EXIT_TRAIL_PCT", 0.0015),
+    /**
+     * Global trailing take-profit drawdown (fraction). null/empty = ATR
+     * adaptive: trail ≈ 0.9×日ATR%, clamped 0.8%..3.5%, tightening as profit
+     * accrues. A fixed value here pins every stock to the same leash.
+     */
+    trailPct: numOrNull("EXIT_TRAIL_PCT"),
     stopLossPct: num("EXIT_STOPLOSS_PCT", 0.03),
   },
 
@@ -37,7 +49,7 @@ export const config = {
     apiKey: str("OPENAI_API_KEY", ""),
     baseUrl: str("OPENAI_BASE_URL", "https://api.openai.com/v1"),
     model: str("OPENAI_MODEL", "gpt-4.1"),
-    promptCacheKey: str("OPENAI_PROMPT_CACHE_KEY", "a-shares-helper-v1"),
+    promptCacheKey: str("OPENAI_PROMPT_CACHE_KEY", "a-shares-helper-v2"),
   },
 
   tushareToken: str("TUSHARE_TOKEN", ""),

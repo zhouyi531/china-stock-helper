@@ -42,15 +42,17 @@ CREATE TABLE IF NOT EXISTS ai_analysis (
 CREATE INDEX IF NOT EXISTS idx_ai_symbol ON ai_analysis(symbol, created_at DESC);
 `);
 
-// Per-position exit overrides, added after the initial release. ALTER throws if
-// the column already exists, so guard each one for idempotent startup.
-for (const col of ["trail_pct", "stop_loss_pct"]) {
-  try {
-    db.exec(`ALTER TABLE positions ADD COLUMN ${col} REAL`);
-  } catch {
-    // column already present
+// lightweight migrations for columns added after the initial release
+function ensureColumn(table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === column)) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
   }
 }
+ensureColumn("positions", "trail_pct", "trail_pct REAL");
+ensureColumn("positions", "stop_loss_pct", "stop_loss_pct REAL");
+ensureColumn("exit_state", "ack", "ack INTEGER NOT NULL DEFAULT 0");
+ensureColumn("watchlist", "pinned", "pinned INTEGER NOT NULL DEFAULT 0");
 
 // ---- Watchlist ----
 
@@ -58,6 +60,7 @@ export interface WatchRow {
   symbol: Symbol;
   name: string;
   sort_order: number;
+  pinned: number; // 0/1, user pinned to the top of the list
   created_at: number;
 }
 
@@ -76,6 +79,13 @@ export function addWatch(symbol: Symbol, name: string): void {
      VALUES (?, ?, ?, ?)
      ON CONFLICT(symbol) DO UPDATE SET name=excluded.name`
   ).run(symbol, name, maxOrder + 1, now);
+}
+
+export function setWatchPinned(symbol: Symbol, pinned: boolean): boolean {
+  const res = db
+    .prepare("UPDATE watchlist SET pinned=? WHERE symbol=?")
+    .run(pinned ? 1 : 0, symbol);
+  return res.changes > 0;
 }
 
 export function removeWatch(symbol: Symbol): void {
@@ -110,8 +120,8 @@ function toPosition(r: PosRow): Position {
     symbol: r.symbol,
     entryPrice: r.entry_price,
     shares: r.shares,
-    trailPct: r.trail_pct ?? config.exit.trailPct,
-    stopLossPct: r.stop_loss_pct ?? config.exit.stopLossPct,
+    trailPct: r.trail_pct,
+    stopLossPct: r.stop_loss_pct,
     createdAt: r.created_at,
   };
 }
@@ -125,30 +135,42 @@ export function listPositions(): Position[] {
   return (db.prepare("SELECT * FROM positions").all() as PosRow[]).map(toPosition);
 }
 
-export function setPosition(
-  symbol: Symbol,
-  entryPrice: number,
-  shares: number | null,
-  trailPct: number | null = null,
-  stopLossPct: number | null = null
-): Position {
+export function setPosition(symbol: Symbol, entryPrice: number, shares: number | null): Position {
   const now = Date.now();
-  const prev = getPosition(symbol);
+  const existing = getPosition(symbol);
   db.prepare(
-    `INSERT INTO positions (symbol, entry_price, shares, trail_pct, stop_loss_pct, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)
-     ON CONFLICT(symbol) DO UPDATE SET
-       entry_price=excluded.entry_price,
-       shares=excluded.shares,
-       trail_pct=excluded.trail_pct,
-       stop_loss_pct=excluded.stop_loss_pct`
-  ).run(symbol, entryPrice, shares, trailPct, stopLossPct, now);
-  // Reset peak tracking only when the entry price changes; editing the stop
-  // ratios alone should preserve the recorded peak.
-  if (!prev || prev.entryPrice !== entryPrice) {
+    `INSERT INTO positions (symbol, entry_price, shares, created_at)
+     VALUES (?, ?, ?, ?)
+     ON CONFLICT(symbol) DO UPDATE SET entry_price=excluded.entry_price, shares=excluded.shares`
+  ).run(symbol, entryPrice, shares, now);
+  // a changed entry price restarts exit tracking; editing only the share
+  // count keeps the tracked peak (trailing-stop high watermark) intact
+  if (!existing || existing.entryPrice !== entryPrice) {
     db.prepare("DELETE FROM exit_state WHERE symbol=?").run(symbol);
   }
   return getPosition(symbol)!;
+}
+
+/**
+ * Update per-stock exit thresholds without restarting exit tracking.
+ * Passing null resets a threshold to the global default. Any pending
+ * warning acknowledgement is cleared so the new thresholds re-alert.
+ */
+export function updatePositionConfig(
+  symbol: Symbol,
+  trailPct: number | null,
+  stopLossPct: number | null
+): Position | null {
+  const tx = db.transaction((s: string) => {
+    db.prepare("UPDATE positions SET trail_pct=?, stop_loss_pct=? WHERE symbol=?").run(
+      trailPct,
+      stopLossPct,
+      s
+    );
+    db.prepare("UPDATE exit_state SET ack=0 WHERE symbol=?").run(s);
+  });
+  tx(symbol);
+  return getPosition(symbol);
 }
 
 export function clearPosition(symbol: Symbol): void {
@@ -165,6 +187,7 @@ export interface ExitRow {
   symbol: Symbol;
   kind: ExitStateKind;
   peak: number;
+  ack: number; // 0/1, warning acknowledged by the user
   updated_at: number;
 }
 
@@ -172,12 +195,26 @@ export function getExitRow(symbol: Symbol): ExitRow | null {
   return (db.prepare("SELECT * FROM exit_state WHERE symbol=?").get(symbol) as ExitRow) ?? null;
 }
 
-export function saveExitRow(symbol: Symbol, kind: ExitStateKind, peak: number): void {
+export function saveExitRow(
+  symbol: Symbol,
+  kind: ExitStateKind,
+  peak: number,
+  ack: boolean
+): void {
   db.prepare(
-    `INSERT INTO exit_state (symbol, kind, peak, updated_at)
-     VALUES (?, ?, ?, ?)
-     ON CONFLICT(symbol) DO UPDATE SET kind=excluded.kind, peak=excluded.peak, updated_at=excluded.updated_at`
-  ).run(symbol, kind, peak, Date.now());
+    `INSERT INTO exit_state (symbol, kind, peak, ack, updated_at)
+     VALUES (?, ?, ?, ?, ?)
+     ON CONFLICT(symbol) DO UPDATE SET kind=excluded.kind, peak=excluded.peak, ack=excluded.ack, updated_at=excluded.updated_at`
+  ).run(symbol, kind, peak, ack ? 1 : 0, Date.now());
+}
+
+/** Mark the current warning as acknowledged (or re-arm it). */
+export function setExitAck(symbol: Symbol, ack: boolean): void {
+  db.prepare("UPDATE exit_state SET ack=?, updated_at=? WHERE symbol=?").run(
+    ack ? 1 : 0,
+    Date.now(),
+    symbol
+  );
 }
 
 // ---- AI analysis history ----

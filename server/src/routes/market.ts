@@ -6,6 +6,9 @@ import { sectorService } from "../sector/layer3.js";
 import { fetchDaily, fetchMinute, type DailyBar, type MinuteBar } from "../providers/index.js";
 import { normalizeSymbol } from "../symbols.js";
 import { sma } from "../util/math.js";
+import { getScan } from "../scanner/scanner.js";
+import { runBacktestWithSweep } from "../backtest/engine.js";
+import type { BacktestStrategy } from "../types.js";
 
 interface KlineCacheEntry {
   ts: number;
@@ -66,4 +69,40 @@ export function registerMarketRoutes(app: FastifyInstance): void {
 
     return { symbol, daily, minute, ma };
   });
+
+  // ---- 全市场扫描（选股） ----
+  app.get<{ Querystring: { force?: string } }>("/api/scan", async (req, reply) => {
+    try {
+      return await getScan(req.query.force === "1");
+    } catch {
+      return reply
+        .code(503)
+        .send({ error: "扫描数据源（东方财富）暂不可用，请稍后重试；海外网络环境下该接口易被限流" });
+    }
+  });
+
+  // ---- 策略回测 / 参数验证 ----
+  app.get<{
+    Params: { symbol: string };
+    Querystring: { strategy?: string; trail?: string; stop?: string; sweep?: string };
+  }>("/api/backtest/:symbol", async (req, reply) => {
+    const symbol = normalizeSymbol(req.params.symbol);
+    if (!symbol) return reply.code(400).send({ error: "无效代码" });
+
+    const strategy: BacktestStrategy = req.query.strategy === "breakout" ? "breakout" : "ma";
+    const trail = clampNum(parseFloat(req.query.trail ?? ""), 0.003, 0.2, 0.03);
+    const stop = clampNum(parseFloat(req.query.stop ?? ""), 0.005, 0.5, 0.03);
+    const sweep = req.query.sweep !== "0";
+
+    const bars = await fetchDaily(symbol, 250).catch(() => [] as DailyBar[]);
+    if (bars.length < 40) {
+      return reply.code(503).send({ error: "历史K线不足，无法回测（需≥40根日线）" });
+    }
+    return runBacktestWithSweep(symbol, bars, strategy, trail, stop, sweep);
+  });
+}
+
+function clampNum(n: number, lo: number, hi: number, fallback: number): number {
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(lo, Math.min(hi, n));
 }

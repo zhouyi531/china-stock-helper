@@ -3,11 +3,11 @@ import { cls, fmtAmount, fmtPct, upDownClass } from "../lib/format";
 
 const KIND_STYLE: Record<RegimeKind, string> = {
   strong_trend: "bg-up/20 text-up border-up/40",
-  theme: "bg-amber-500/20 text-amber-700 border-amber-500/40",
-  range: "bg-sky-500/15 text-sky-700 border-sky-500/40",
+  theme: "bg-amber-500/20 text-amber-300 border-amber-500/40",
+  range: "bg-sky-500/15 text-sky-300 border-sky-500/40",
   weak: "bg-down/15 text-down border-down/40",
   panic: "bg-down/25 text-down border-down/50",
-  low_volume: "bg-slate-500/20 text-slate-700 border-slate-500/40",
+  low_volume: "bg-slate-500/20 text-slate-300 border-slate-500/40",
 };
 
 export function RegimeBar({ regime }: { regime: Regime | null }) {
@@ -39,13 +39,27 @@ export function RegimeBar({ regime }: { regime: Regime | null }) {
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
           {regime.indices.map((i) => (
             <div key={i.symbol} className="flex items-baseline gap-1.5 text-sm tabular">
-              <span className="text-slate-600">{i.name}</span>
+              <span className="text-slate-400">{i.name}</span>
               <span className={upDownClass(i.pctChange)}>{i.price.toFixed(2)}</span>
               <span className={cls("text-xs", upDownClass(i.pctChange))}>
                 {fmtPct(i.pctChange)}
               </span>
-              <span className={cls("text-[10px]", i.aboveVwap ? "text-up" : "text-down")}>
+              <span
+                className={cls("text-[10px]", i.aboveVwap ? "text-up" : "text-down")}
+                title={
+                  i.aboveMa20 != null
+                    ? i.aboveMa20
+                      ? "20日线上方"
+                      : "20日线下方"
+                    : undefined
+                }
+              >
                 {i.aboveVwap ? "▲VWAP" : "▼VWAP"}
+                {i.aboveMa20 != null && (
+                  <span className={i.aboveMa20 ? "text-up" : "text-down"}>
+                    {i.aboveMa20 ? "·MA20上" : "·MA20下"}
+                  </span>
+                )}
               </span>
             </div>
           ))}
@@ -63,11 +77,27 @@ export function RegimeBar({ regime }: { regime: Regime | null }) {
               <span className="text-slate-500">
                 涨停 <span className="text-up">{b.limitUp}</span> / 跌停{" "}
                 <span className="text-down">{b.limitDown}</span>
+                {b.maxLimitStreak != null && b.maxLimitStreak >= 2 && (
+                  <span className="ml-1 text-amber-300" title="今日最高连板高度（题材情绪温度计）">
+                    {b.maxLimitStreak}连板
+                  </span>
+                )}
               </span>
-              <span className="text-slate-600">两市 {fmtAmount(b.totalAmount)}</span>
+              <span className="text-slate-400">
+                两市 {fmtAmount(b.totalAmount)}
+                {b.amountChangePct != null && (
+                  <span
+                    className={cls("ml-1 text-xs", upDownClass(b.amountChangePct))}
+                    title="按交易时段折算的全天成交额，对比昨日"
+                  >
+                    ({b.amountChangePct > 0 ? "+" : ""}
+                    {b.amountChangePct.toFixed(1)}%)
+                  </span>
+                )}
+              </span>
             </>
           ) : (
-            <span className="text-xs text-slate-400">涨跌家数/板块数据不可用（已降级）</span>
+            <span className="text-xs text-slate-600">涨跌家数/板块数据不可用（已降级）</span>
           )}
         </div>
       </div>

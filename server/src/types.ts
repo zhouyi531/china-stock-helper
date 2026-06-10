@@ -44,7 +44,7 @@ export interface Quote {
 
 export type TrendTag = "bull" | "bear" | "neutral";
 
-/** Layer 1: per-stock derived metrics. */
+/** Layer 1: per-stock derived metrics (intraday + daily timeframe). */
 export interface Layer1Metrics {
   price: number;
   pctChange: number; // %
@@ -54,16 +54,53 @@ export interface Layer1Metrics {
   ma5: number | null;
   ma10: number | null;
   ma20: number | null;
-  intradayMomentum: number; // % over recent window
+  ma60: number | null;
+  /** % change over the last ~5 minutes of ticks */
+  intradayMomentum: number;
+  /** % change over the last ~15 minutes of ticks */
+  intradayMomentum15: number;
   relativeVolume: number; // ratio vs historical baseline
   turnoverRate: number; // %
   amplitude: number; // %
-  volatility: number; // % (daily return stddev, annualised-free)
+  volatility: number; // % (20d daily return stddev)
   distanceToLimitUp: number; // %
   distanceToLimitDown: number; // %
   bidAskSpread: number; // %
   orderBookImbalance: number; // -1..1
-  /** composite single-stock trend score 0..100 */
+  /** position of price within today's range, 0..100 (100 = at high) */
+  dayRangePos: number | null;
+
+  // ---- daily timeframe indicators (computed on qfq daily bars incl. today live) ----
+  macdDif: number | null;
+  macdDea: number | null;
+  /** Chinese-convention bar = 2×(DIF−DEA) */
+  macdHist: number | null;
+  /** previous bar's hist, for rising/falling detection */
+  macdHistPrev: number | null;
+  rsi14: number | null;
+  kdjK: number | null;
+  kdjD: number | null;
+  kdjJ: number | null;
+  /** Wilder ATR(14) as % of price — volatility unit for stops */
+  atrPct: number | null;
+  /** % return over last 5 / 20 completed-ish days */
+  ret5d: number | null;
+  ret20d: number | null;
+  /** price position inside the 60d high-low range, 0..100 */
+  pos60d: number | null;
+  /** % distance to the highest high of the previous 20 days (negative = broke out above) */
+  distToHigh20: number | null;
+  /** mean(vol last 5d) / mean(vol last 20d) — volume trend */
+  volTrend: number | null;
+  /** MA20 slope: % change of MA20 vs 5 bars ago */
+  ma20Slope: number | null;
+
+  // ---- scores ----
+  /** intraday strength 0..100 (timing layer) */
+  intradayScore: number;
+  /** daily-timeframe trend quality 0..100 (direction layer) */
+  dailyScore: number | null;
+  /** fused stock score 0..100 = 0.55×intraday + 0.45×daily (intraday only when no daily data) */
   trendScore: number;
   trendTag: TrendTag;
 }
@@ -75,6 +112,8 @@ export interface IndexSnapshot {
   pctChange: number;
   amount: number;
   aboveVwap: boolean;
+  /** index above its daily MA20 (medium-term health); null when unknown */
+  aboveMa20: boolean | null;
   intradayDrawdown: number; // % from intraday high
 }
 
@@ -84,8 +123,11 @@ export interface Breadth {
   unchanged: number;
   limitUp: number;
   limitDown: number;
+  /** highest 连板 height in today's limit-up pool (theme temperature) */
+  maxLimitStreak: number | null;
   totalAmount: number; // 元, whole market
-  amountChangePct: number | null; // vs previous day, if known
+  /** projected full-day amount vs yesterday's total, % (time-of-day adjusted) */
+  amountChangePct: number | null;
   available: boolean; // false when source degraded
 }
 
@@ -124,6 +166,8 @@ export interface SectorBoard {
   amountChangePct: number | null;
   upRatio: number | null; // share of members up
   limitUpCount: number | null;
+  /** highest 连板 streak among members (theme height) */
+  maxLimitStreak: number | null;
   leaderStrength: number | null; // top member strength
   /** composite per doc formula, 0..100 */
   score: number;
@@ -135,7 +179,47 @@ export interface StockSectorInfo {
   industry: SectorBoard | null;
   concepts: SectorRef[];
   sectorScore: number; // = industry.score when available
+  /** best matched concept board score, when resolvable */
+  conceptScore: number | null;
   available: boolean;
+}
+
+// ---- Decision engine (fused buy/sell signal) ----
+
+export type DecisionAction =
+  | "strong_buy" // 强烈买入信号
+  | "buy" // 可买入
+  | "watch" // 观望
+  | "hold" // 持有
+  | "reduce" // 减仓
+  | "exit" // 离场
+  | "avoid"; // 回避
+
+export interface DecisionCheck {
+  key: string;
+  label: string;
+  /** true=满足 false=不满足 null=数据缺失 */
+  pass: boolean | null;
+  detail: string;
+}
+
+export interface Decision {
+  action: DecisionAction;
+  label: string; // Chinese label
+  /** fused opportunity score 0..100: 日线30% + 日内25% + 板块20% + 大盘15% + 量能10% */
+  score: number;
+  /** data completeness & component agreement, 0..100 */
+  confidence: number;
+  reasons: string[]; // supporting evidence
+  warnings: string[]; // risk flags
+  /** the 5-condition entry checklist (上涨+放量+VWAP上方+板块走强+大盘配合 …) */
+  checklist: DecisionCheck[];
+  /** suggested initial stop for a NEW entry (ATR-based), fraction of price */
+  suggestedStopPct: number | null;
+  suggestedStopPrice: number | null;
+  /** short timing hint, e.g. 回踩VWAP企稳再进 */
+  entryHint: string | null;
+  ts: number;
 }
 
 export type ExitStateKind =
@@ -151,10 +235,10 @@ export interface Position {
   entryPrice: number;
   /** optional share count for P/L money calc */
   shares: number | null;
-  /** trailing take-profit drawdown, fraction (e.g. 0.0015). Falls back to config default. */
-  trailPct: number;
-  /** stop-loss distance below entry, fraction (e.g. 0.03). Falls back to config default. */
-  stopLossPct: number;
+  /** per-stock override of the trailing take-profit drawdown (fraction); null = ATR-adaptive */
+  trailPct: number | null;
+  /** per-stock override of the stop-loss threshold (fraction); null = global default */
+  stopLossPct: number | null;
   createdAt: number;
 }
 
@@ -168,32 +252,30 @@ export interface ExitState {
   /** stop-loss line = entry*(1-stopLoss) */
   stopLossPrice: number;
   pnlPct: number; // current P/L vs entry, %
+  /** effective trailing drawdown threshold in use (fraction, after ATR/profit-tier adjustment) */
+  trailPct: number;
+  /** effective stop-loss threshold in use (fraction) */
+  stopLossPct: number;
+  /** "fixed" when the user pinned a trail %, "atr" when adaptive */
+  trailMode: "fixed" | "atr";
+  /** user dismissed the current warning; auto-resets when the state kind changes */
+  acknowledged: boolean;
   message: string | null;
   updatedAt: number;
 }
 
 /** What the frontend renders per watched stock. */
-/**
- * Main-force money flow. A free eastmoney 资金流 approximation of DDE净量 (true
- * DDE needs Level-2 tick data, unavailable on public feeds).
- */
-export interface FundFlow {
-  /** 主力净流入净额, 元 (positive = 净流入) */
-  mainNetInflow: number;
-  /** 主力净流入净占比, % */
-  mainNetRatio: number;
-  available: boolean;
-}
-
 export interface StockSnapshot {
   symbol: Symbol;
   code: string;
   name: string;
   market: Market;
+  /** User pinned this stock to the top of the watchlist. */
+  pinned?: boolean;
   quote: Quote | null;
   layer1: Layer1Metrics | null;
-  fundFlow: FundFlow | null;
   sector: StockSectorInfo | null;
+  decision: Decision | null;
   position: Position | null;
   exit: ExitState | null;
   error?: string;
@@ -206,18 +288,83 @@ export interface MarketClock {
   label: string;
 }
 
-export interface ExitDefaults {
-  trailPct: number;
-  stopLossPct: number;
-}
-
 export interface FullSnapshot {
   clock: MarketClock;
   stocks: StockSnapshot[];
   regime: Regime | null;
-  /** server defaults for new positions (config-driven) */
-  exitDefaults: ExitDefaults;
   ts: number;
+}
+
+// ---- Market scanner (选股) ----
+
+export interface ScanCandidate {
+  symbol: Symbol;
+  code: string;
+  name: string;
+  price: number;
+  pctChange: number;
+  /** 涨速: recent few-minute % change from the source */
+  speedPct: number | null;
+  volumeRatio: number | null;
+  turnoverRate: number | null;
+  amount: number; // 元
+  dayRangePos: number | null; // 0..100
+  industry: string | null;
+  industryScore: number | null;
+  industryRank: number | null;
+  score: number; // 0..100
+  reasons: string[];
+  warnings: string[];
+  inWatchlist: boolean;
+}
+
+export interface ScanResult {
+  candidates: ScanCandidate[];
+  /** universe size after filters */
+  scanned: number;
+  regimeKind: RegimeKind | null;
+  regimeNote: string | null;
+  ts: number;
+}
+
+// ---- Backtest ----
+
+export type BacktestStrategy = "ma" | "breakout";
+
+export interface BacktestTrade {
+  entryDate: string;
+  entryPrice: number;
+  exitDate: string;
+  exitPrice: number;
+  pnlPct: number;
+  holdDays: number;
+  exitReason: "trail" | "hard_stop" | "signal" | "eod";
+}
+
+export interface BacktestMetrics {
+  trades: number;
+  winRate: number | null; // %
+  avgWinPct: number | null;
+  avgLossPct: number | null;
+  profitFactor: number | null;
+  totalReturnPct: number; // compounded
+  maxDrawdownPct: number;
+  avgHoldDays: number | null;
+  buyHoldReturnPct: number;
+}
+
+export interface BacktestResult {
+  symbol: Symbol;
+  strategy: BacktestStrategy;
+  bars: number;
+  startDate: string | null;
+  endDate: string | null;
+  trailPct: number;
+  stopPct: number;
+  metrics: BacktestMetrics;
+  trades: BacktestTrade[];
+  /** optional parameter sweep table over trailing-stop values */
+  sweep: { trailPct: number; metrics: BacktestMetrics }[] | null;
 }
 
 // ---- AI ----

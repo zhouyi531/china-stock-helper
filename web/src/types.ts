@@ -44,7 +44,9 @@ export interface Layer1Metrics {
   ma5: number | null;
   ma10: number | null;
   ma20: number | null;
+  ma60: number | null;
   intradayMomentum: number;
+  intradayMomentum15: number;
   relativeVolume: number;
   turnoverRate: number;
   amplitude: number;
@@ -53,6 +55,26 @@ export interface Layer1Metrics {
   distanceToLimitDown: number;
   bidAskSpread: number;
   orderBookImbalance: number;
+  dayRangePos: number | null;
+
+  macdDif: number | null;
+  macdDea: number | null;
+  macdHist: number | null;
+  macdHistPrev: number | null;
+  rsi14: number | null;
+  kdjK: number | null;
+  kdjD: number | null;
+  kdjJ: number | null;
+  atrPct: number | null;
+  ret5d: number | null;
+  ret20d: number | null;
+  pos60d: number | null;
+  distToHigh20: number | null;
+  volTrend: number | null;
+  ma20Slope: number | null;
+
+  intradayScore: number;
+  dailyScore: number | null;
   trendScore: number;
   trendTag: TrendTag;
 }
@@ -64,6 +86,7 @@ export interface IndexSnapshot {
   pctChange: number;
   amount: number;
   aboveVwap: boolean;
+  aboveMa20: boolean | null;
   intradayDrawdown: number;
 }
 
@@ -73,6 +96,7 @@ export interface Breadth {
   unchanged: number;
   limitUp: number;
   limitDown: number;
+  maxLimitStreak: number | null;
   totalAmount: number;
   amountChangePct: number | null;
   available: boolean;
@@ -113,6 +137,7 @@ export interface SectorBoard {
   amountChangePct: number | null;
   upRatio: number | null;
   limitUpCount: number | null;
+  maxLimitStreak: number | null;
   leaderStrength: number | null;
   score: number;
   available: boolean;
@@ -122,7 +147,40 @@ export interface StockSectorInfo {
   industry: SectorBoard | null;
   concepts: SectorRef[];
   sectorScore: number;
+  conceptScore: number | null;
   available: boolean;
+}
+
+// ---- Decision ----
+
+export type DecisionAction =
+  | "strong_buy"
+  | "buy"
+  | "watch"
+  | "hold"
+  | "reduce"
+  | "exit"
+  | "avoid";
+
+export interface DecisionCheck {
+  key: string;
+  label: string;
+  pass: boolean | null;
+  detail: string;
+}
+
+export interface Decision {
+  action: DecisionAction;
+  label: string;
+  score: number;
+  confidence: number;
+  reasons: string[];
+  warnings: string[];
+  checklist: DecisionCheck[];
+  suggestedStopPct: number | null;
+  suggestedStopPrice: number | null;
+  entryHint: string | null;
+  ts: number;
 }
 
 export type ExitStateKind =
@@ -137,10 +195,9 @@ export interface Position {
   symbol: string;
   entryPrice: number;
   shares: number | null;
-  /** trailing take-profit drawdown, fraction (e.g. 0.0015) */
-  trailPct: number;
-  /** stop-loss distance below entry, fraction (e.g. 0.03) */
-  stopLossPct: number;
+  /** per-stock threshold overrides (fractions); null = ATR-adaptive/global */
+  trailPct: number | null;
+  stopLossPct: number | null;
   createdAt: number;
 }
 
@@ -152,16 +209,13 @@ export interface ExitState {
   targetPrice: number | null;
   stopLossPrice: number;
   pnlPct: number;
+  /** effective thresholds in use (fractions) */
+  trailPct: number;
+  stopLossPct: number;
+  trailMode: "fixed" | "atr";
+  acknowledged: boolean;
   message: string | null;
   updatedAt: number;
-}
-
-export interface FundFlow {
-  /** 主力净流入净额, 元 (positive = 净流入) */
-  mainNetInflow: number;
-  /** 主力净流入净占比, % */
-  mainNetRatio: number;
-  available: boolean;
 }
 
 export interface StockSnapshot {
@@ -169,10 +223,12 @@ export interface StockSnapshot {
   code: string;
   name: string;
   market: Market;
+  /** User pinned this stock to the top of the watchlist. */
+  pinned?: boolean;
   quote: Quote | null;
   layer1: Layer1Metrics | null;
-  fundFlow: FundFlow | null;
   sector: StockSectorInfo | null;
+  decision: Decision | null;
   position: Position | null;
   exit: ExitState | null;
   error?: string;
@@ -185,17 +241,80 @@ export interface MarketClock {
   label: string;
 }
 
-export interface ExitDefaults {
-  trailPct: number;
-  stopLossPct: number;
-}
-
 export interface FullSnapshot {
   clock: MarketClock;
   stocks: StockSnapshot[];
   regime: Regime | null;
-  exitDefaults: ExitDefaults;
   ts: number;
+}
+
+// ---- Scanner ----
+
+export interface ScanCandidate {
+  symbol: string;
+  code: string;
+  name: string;
+  price: number;
+  pctChange: number;
+  speedPct: number | null;
+  volumeRatio: number | null;
+  turnoverRate: number | null;
+  amount: number;
+  dayRangePos: number | null;
+  industry: string | null;
+  industryScore: number | null;
+  industryRank: number | null;
+  score: number;
+  reasons: string[];
+  warnings: string[];
+  inWatchlist: boolean;
+}
+
+export interface ScanResult {
+  candidates: ScanCandidate[];
+  scanned: number;
+  regimeKind: RegimeKind | null;
+  regimeNote: string | null;
+  ts: number;
+}
+
+// ---- Backtest ----
+
+export type BacktestStrategy = "ma" | "breakout";
+
+export interface BacktestTrade {
+  entryDate: string;
+  entryPrice: number;
+  exitDate: string;
+  exitPrice: number;
+  pnlPct: number;
+  holdDays: number;
+  exitReason: "trail" | "hard_stop" | "signal" | "eod";
+}
+
+export interface BacktestMetrics {
+  trades: number;
+  winRate: number | null;
+  avgWinPct: number | null;
+  avgLossPct: number | null;
+  profitFactor: number | null;
+  totalReturnPct: number;
+  maxDrawdownPct: number;
+  avgHoldDays: number | null;
+  buyHoldReturnPct: number;
+}
+
+export interface BacktestResult {
+  symbol: string;
+  strategy: BacktestStrategy;
+  bars: number;
+  startDate: string | null;
+  endDate: string | null;
+  trailPct: number;
+  stopPct: number;
+  metrics: BacktestMetrics;
+  trades: BacktestTrade[];
+  sweep: { trailPct: number; metrics: BacktestMetrics }[] | null;
 }
 
 export type AiMode = "entry" | "exit";

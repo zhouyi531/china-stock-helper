@@ -2,6 +2,7 @@ import type { SectorBoard, SectorRef, StockSectorInfo, Symbol } from "../types.j
 import {
   fetchEastMoneyBoards,
   fetchEastMoneyStockBinding,
+  fetchEastMoneyZTPool,
 } from "../providers/eastmoney.js";
 import { clamp, round } from "../util/math.js";
 
@@ -23,7 +24,11 @@ function weightedScore(components: WeightedComponent[]): number {
   return round(clamp(sum / wsum, 0, 100), 1);
 }
 
-/** Score boards of one type (per the doc formula). Mutates `score` on each. */
+/**
+ * Score boards of one type (per docs/参数建议.txt):
+ *   rank 30% + 成交额分位 25% + 上涨比例 20% + 涨停数 15% + 龙头强度 10%
+ * 涨停数 now comes from the live 涨停池 (was always missing before).
+ */
 function scoreBoards(boards: SectorBoard[]): SectorBoard[] {
   if (boards.length === 0) return boards;
   const amounts = boards.map((b) => b.amount).sort((a, b) => a - b);
@@ -61,22 +66,44 @@ const BINDING_TTL = 6 * 60 * 60 * 1000; // 6h
 class SectorService {
   private industry: SectorBoard[] = [];
   private concept: SectorBoard[] = [];
-  private byName = new Map<string, SectorBoard>();
+  private industryByName = new Map<string, SectorBoard>();
+  private conceptByName = new Map<string, SectorBoard>();
   private bindings = new Map<Symbol, Binding>();
   private lastRefresh = 0;
   available = false;
 
-  /** Refresh industry + concept board lists and recompute scores. */
+  /** Refresh industry + concept board lists, inject 涨停池 counts, recompute scores. */
   async refresh(): Promise<void> {
     try {
-      const [ind, con] = await Promise.all([
+      const [ind, con, ztPool] = await Promise.all([
         fetchEastMoneyBoards("industry"),
         fetchEastMoneyBoards("concept"),
+        fetchEastMoneyZTPool(),
       ]);
+
+      // per-industry limit-up count + max 连板 height from the live pool
+      if (ztPool.available && ind.length) {
+        const counts = new Map<string, { n: number; maxStreak: number }>();
+        for (const item of ztPool.items) {
+          if (!item.industry) continue;
+          const cur = counts.get(item.industry) ?? { n: 0, maxStreak: 0 };
+          cur.n += 1;
+          cur.maxStreak = Math.max(cur.maxStreak, item.streak);
+          counts.set(item.industry, cur);
+        }
+        for (const b of ind) {
+          const c = counts.get(b.name);
+          b.limitUpCount = c ? c.n : 0;
+          b.maxLimitStreak = c ? c.maxStreak : 0;
+        }
+      }
+
       if (ind.length) this.industry = scoreBoards(ind);
       if (con.length) this.concept = scoreBoards(con);
-      this.byName.clear();
-      for (const b of this.industry) this.byName.set(b.name, b);
+      this.industryByName.clear();
+      this.conceptByName.clear();
+      for (const b of this.industry) this.industryByName.set(b.name, b);
+      for (const b of this.concept) this.conceptByName.set(b.name, b);
       this.available = this.industry.length > 0;
       this.lastRefresh = Date.now();
     } catch {
@@ -86,6 +113,12 @@ class SectorService {
 
   getBoards(): { industry: SectorBoard[]; concept: SectorBoard[]; available: boolean } {
     return { industry: this.industry, concept: this.concept, available: this.available };
+  }
+
+  /** Industry board lookup by exact name (used by the scanner). */
+  getIndustryByName(name: string | null | undefined): SectorBoard | null {
+    if (!name) return null;
+    return this.industryByName.get(name) ?? null;
   }
 
   /** Fetch + cache a stock's industry/concept binding when missing or stale. */
@@ -99,13 +132,28 @@ class SectorService {
   getStockSector(symbol: Symbol): StockSectorInfo {
     const binding = this.bindings.get(symbol);
     if (!binding || !binding.available || !binding.industryName) {
-      return { industry: null, concepts: binding?.concepts ?? [], sectorScore: 0, available: false };
+      return {
+        industry: null,
+        concepts: binding?.concepts ?? [],
+        sectorScore: 0,
+        conceptScore: null,
+        available: false,
+      };
     }
-    const board = this.byName.get(binding.industryName) ?? null;
+    const board = this.industryByName.get(binding.industryName) ?? null;
+
+    // best matching concept board score (concept labels don't always map 1:1)
+    let conceptScore: number | null = null;
+    for (const c of binding.concepts) {
+      const cb = this.conceptByName.get(c.name);
+      if (cb && (conceptScore == null || cb.score > conceptScore)) conceptScore = cb.score;
+    }
+
     return {
       industry: board,
       concepts: binding.concepts,
       sectorScore: board?.score ?? 0,
+      conceptScore,
       available: board != null,
     };
   }

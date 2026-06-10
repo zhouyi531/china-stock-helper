@@ -1,6 +1,6 @@
 import { fetchJson, toNum } from "./http.js";
 import { toEastMoneySecid } from "../symbols.js";
-import type { FundFlow, SectorBoard, SectorRef, Symbol } from "../types.js";
+import type { SectorBoard, SectorRef, Symbol } from "../types.js";
 
 const EM_HEADERS = { Referer: "https://quote.eastmoney.com/" };
 const UT = "fa5fd1943c7b386f172d6893dbfba10b";
@@ -52,54 +52,13 @@ export async function fetchEastMoneyBoards(
       amount: toNum(r.f6),
       amountChangePct: null,
       upRatio,
-      limitUpCount: null,
+      limitUpCount: null, // injected from the 涨停池 by the sector layer
+      maxLimitStreak: null,
       leaderStrength: r.f136 != null ? toNum(r.f136) / 100 : null,
       score: 0, // filled by sector layer
       available: true,
     };
   });
-}
-
-/**
- * Main-force net inflow per stock via the bulk ulist endpoint — the free
- * eastmoney 资金流 stand-in for DDE净量. One request covers the whole watchlist.
- *   f12  = code, f13 = market id (1=sh, 0=sz/bj)
- *   f62  = 主力净流入净额 (元)
- *   f184 = 主力净流入净占比 (%)
- * NOTE: field semantics confirmed against eastmoney's public 资金流 ranking;
- * verify once on a host with eastmoney access. Degrades to an empty map.
- */
-export async function fetchEastMoneyFundFlow(
-  symbols: Symbol[]
-): Promise<Map<Symbol, FundFlow>> {
-  const out = new Map<Symbol, FundFlow>();
-  if (symbols.length === 0) return out;
-
-  const secidToSymbol = new Map<string, Symbol>();
-  for (const s of symbols) secidToSymbol.set(toEastMoneySecid(s), s);
-  const secids = [...secidToSymbol.keys()].join(",");
-  const url =
-    `https://push2.eastmoney.com/api/qt/ulist.np/get?fltt=2&secids=${secids}` +
-    `&fields=f12,f13,f62,f184&ut=${UT}`;
-
-  try {
-    const json = await fetchJson<any>(url, { headers: EM_HEADERS, timeoutMs: 8000 });
-    const diff = json?.data?.diff;
-    const rows: any[] = Array.isArray(diff) ? diff : diff ? Object.values(diff) : [];
-    for (const r of rows) {
-      const sym = secidToSymbol.get(`${r.f13}.${r.f12}`);
-      if (!sym) continue;
-      const hasData = r.f62 != null && r.f62 !== "-";
-      out.set(sym, {
-        mainNetInflow: toNum(r.f62),
-        mainNetRatio: toNum(r.f184),
-        available: hasData,
-      });
-    }
-  } catch {
-    // degraded: empty map -> callers treat as unavailable
-  }
-  return out;
 }
 
 export interface MarketBreadthRaw {
@@ -131,11 +90,21 @@ export async function fetchEastMoneyBreadthCounts(): Promise<MarketBreadthRaw> {
   return { advancers: adv, decliners: dec, unchanged: 0, totalAmount: amount, available: true };
 }
 
+/** Date in the Asia/Shanghai timezone as yyyymmdd (trading-day key). */
 function ymd(d = new Date()): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}${m}${day}`;
+  const fmt = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  });
+  return fmt.format(d).replace(/-/g, "");
+}
+
+/** Date in the Asia/Shanghai timezone as yyyy-mm-dd (matches kline dates). */
+export function shanghaiDateIso(d = new Date()): string {
+  const s = ymd(d);
+  return `${s.slice(0, 4)}-${s.slice(4, 6)}-${s.slice(6, 8)}`;
 }
 
 export interface LimitCounts {
@@ -160,6 +129,203 @@ export async function fetchEastMoneyLimitCounts(): Promise<LimitCounts> {
   } catch {
     return { limitUp: 0, limitDown: 0, available: false };
   }
+}
+
+// ---- Limit-up pool (涨停池) with industry binding & 连板 height ----
+
+export interface ZTPoolItem {
+  code: string;
+  name: string;
+  /** 行业板块 name, matches industry board names */
+  industry: string | null;
+  /** 连板数 (1 = 首板) */
+  streak: number;
+}
+
+export interface ZTPool {
+  count: number;
+  items: ZTPoolItem[];
+  /** highest 连板 height in the pool */
+  maxStreak: number;
+  available: boolean;
+  ts: number;
+}
+
+let ztPoolCache: ZTPool | null = null;
+const ZT_POOL_TTL = 20_000;
+
+/**
+ * Full limit-up pool: every 涨停 stock with its industry & 连板 height.
+ * Feeds per-board limit-up counts (Layer 3) and theme temperature (Layer 2).
+ * Cached briefly because both the regime and sector loops want it.
+ */
+export async function fetchEastMoneyZTPool(): Promise<ZTPool> {
+  if (ztPoolCache && Date.now() - ztPoolCache.ts < ZT_POOL_TTL) return ztPoolCache;
+  const url =
+    `https://push2ex.eastmoney.com/getTopicZTPool?ut=${UT}&dpt=wz.ztzt` +
+    `&Pageindex=0&pagesize=600&sort=fbt%3Aasc&date=${ymd()}`;
+  try {
+    const json = await fetchJson<any>(url, { headers: EM_HEADERS, timeoutMs: 9000 });
+    const pool: any[] = json?.data?.pool ?? [];
+    const items: ZTPoolItem[] = pool.map((p) => ({
+      // numeric codes lose leading zeros (e.g. 2415 -> "002415")
+      code: String(p?.c ?? "").padStart(6, "0"),
+      name: String(p?.n ?? ""),
+      industry: typeof p?.hybk === "string" && p.hybk ? p.hybk : null,
+      streak: Math.max(1, toNum(p?.lbc)),
+    }));
+    const out: ZTPool = {
+      count: toNum(json?.data?.ct) || items.length,
+      items,
+      maxStreak: items.reduce((a, i) => Math.max(a, i.streak), 0),
+      available: json?.data != null,
+      ts: Date.now(),
+    };
+    if (out.available) ztPoolCache = out;
+    return out;
+  } catch {
+    return ztPoolCache ?? { count: 0, items: [], maxStreak: 0, available: false, ts: Date.now() };
+  }
+}
+
+// ---- Whole-market amount history (for 成交额 vs 昨日) ----
+
+interface IndexAmountCache {
+  /** total SH+SZ amount of the most recent COMPLETED trading day, 元 */
+  prevDayAmount: number;
+  ts: number;
+}
+let indexAmountCache: IndexAmountCache | null = null;
+const INDEX_AMOUNT_TTL = 10 * 60 * 1000;
+
+async function fetchIndexDailyAmounts(secid: string): Promise<{ date: string; amount: number }[]> {
+  const url =
+    `https://push2his.eastmoney.com/api/qt/stock/kline/get?secid=${secid}` +
+    `&klt=101&fqt=0&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f56,f57&end=20500101&lmt=6&ut=${UT}`;
+  const json = await fetchJson<any>(url, { headers: EM_HEADERS, timeoutMs: 9000 });
+  const klines: string[] = json?.data?.klines ?? [];
+  return klines.map((k) => {
+    const seg = k.split(",");
+    return { date: seg[0] ?? "", amount: toNum(seg[2]) };
+  });
+}
+
+/**
+ * Yesterday's total two-market turnover (上证综指 covers all SH, 深证综指 all SZ).
+ * Used to compute today's projected amount change. Cached 10 minutes.
+ */
+export async function fetchPrevDayMarketAmount(): Promise<number | null> {
+  if (indexAmountCache && Date.now() - indexAmountCache.ts < INDEX_AMOUNT_TTL) {
+    return indexAmountCache.prevDayAmount;
+  }
+  try {
+    const [sh, sz] = await Promise.all([
+      fetchIndexDailyAmounts("1.000001"), // 上证综指
+      fetchIndexDailyAmounts("0.399106"), // 深证综指
+    ]);
+    const today = shanghaiDateIso();
+    const prevOf = (rows: { date: string; amount: number }[]): number => {
+      const completed = rows.filter((r) => r.date !== today && r.amount > 0);
+      return completed.length ? completed[completed.length - 1].amount : 0;
+    };
+    const total = prevOf(sh) + prevOf(sz);
+    if (total <= 0) return null;
+    indexAmountCache = { prevDayAmount: total, ts: Date.now() };
+    return total;
+  } catch {
+    return indexAmountCache?.prevDayAmount ?? null;
+  }
+}
+
+// ---- Whole-market stock list (for the scanner) ----
+
+export interface ScannerRow {
+  symbol: Symbol;
+  code: string;
+  name: string;
+  price: number;
+  pctChange: number; // %
+  volume: number; // 手
+  amount: number; // 元
+  turnoverRate: number; // %
+  volumeRatio: number;
+  high: number;
+  low: number;
+  open: number;
+  prevClose: number;
+  /** 涨速 % over the last few minutes */
+  speedPct: number;
+  industry: string | null;
+}
+
+interface RawScanRow {
+  f12?: string; // code
+  f13?: number; // market: 1=sh 0=sz
+  f14?: string; // name
+  f2?: number; // price
+  f3?: number; // pct %
+  f5?: number; // volume 手
+  f6?: number; // amount 元
+  f8?: number; // turnover %
+  f10?: number; // 量比
+  f15?: number; // high
+  f16?: number; // low
+  f17?: number; // open
+  f18?: number; // prevClose
+  f22?: number; // 涨速 %
+  f100?: string; // industry name
+}
+
+const SCAN_FIELDS = "f12,f13,f14,f2,f3,f5,f6,f8,f10,f15,f16,f17,f18,f22,f100";
+/** 沪主板 + 科创板 + 深主板 + 创业板 (no BJ — illiquid for this tool's style) */
+const SCAN_FS = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23";
+
+async function fetchScanPage(fid: string, pz: number): Promise<RawScanRow[]> {
+  const url =
+    `https://push2.eastmoney.com/api/qt/clist/get?pn=1&pz=${pz}&po=1&np=1&fltt=2` +
+    `&fid=${fid}&fs=${SCAN_FS}&fields=${SCAN_FIELDS}&ut=${UT}`;
+  const json = await fetchJson<any>(url, { headers: EM_HEADERS, timeoutMs: 10000 });
+  const rows: RawScanRow[] = json?.data?.diff ?? [];
+  return Array.isArray(rows) ? rows : [];
+}
+
+/**
+ * Active universe for the scanner: top 500 by amount (liquidity core) merged
+ * with top 300 by % change (momentum tail). Two requests, ~700 unique rows.
+ */
+export async function fetchEastMoneyScanUniverse(): Promise<ScannerRow[]> {
+  const [byAmount, byPct] = await Promise.all([
+    fetchScanPage("f6", 500),
+    fetchScanPage("f3", 300),
+  ]);
+  const seen = new Set<string>();
+  const out: ScannerRow[] = [];
+  for (const r of [...byAmount, ...byPct]) {
+    const code = r.f12 ?? "";
+    if (!code || seen.has(code)) continue;
+    seen.add(code);
+    const market = r.f13 === 1 ? "sh" : "sz";
+    const price = toNum(r.f2);
+    if (price <= 0) continue;
+    out.push({
+      symbol: `${market}${code}`,
+      code,
+      name: r.f14 ?? "",
+      price,
+      pctChange: toNum(r.f3),
+      volume: toNum(r.f5),
+      amount: toNum(r.f6),
+      turnoverRate: toNum(r.f8),
+      volumeRatio: toNum(r.f10),
+      high: toNum(r.f15),
+      low: toNum(r.f16),
+      open: toNum(r.f17),
+      prevClose: toNum(r.f18),
+      speedPct: toNum(r.f22),
+      industry: typeof r.f100 === "string" && r.f100 ? r.f100 : null,
+    });
+  }
+  return out;
 }
 
 export interface StockBoardBinding {

@@ -1,9 +1,16 @@
 import type { ExitState, ExitStateKind } from "../types.js";
-import { round } from "../util/math.js";
+import { clamp, round } from "../util/math.js";
 
 export interface ExitConfig {
-  trailPct: number; // e.g. 0.0015 (0.15%)
-  stopLossPct: number; // e.g. 0.03 (3%)
+  /**
+   * Base trailing drawdown (fraction). In "atr" mode this is the ATR-derived
+   * base and the engine tightens it as profit accrues; in "fixed" mode it is
+   * used exactly as given (user override / env pin).
+   */
+  trailPct: number;
+  /** hard stop from entry (fraction), e.g. 0.03 = −3% */
+  stopLossPct: number;
+  trailMode: "fixed" | "atr";
 }
 
 export interface ExitMemory {
@@ -12,9 +19,35 @@ export interface ExitMemory {
 }
 
 /**
- * Advance the exit state machine by one tick. Faithful to docs/离场条件.md:
+ * ATR-adaptive base trail: ~0.9 × dailyATR%, bounded to 0.8%..3.5%.
+ * A stock that swings 3% a day needs a ~2.7% leash; a sleepy large-cap gets
+ * a tighter one. (The old fixed default of 0.15% was inside bid-ask noise and
+ * fired on essentially every tick.)
+ */
+export function adaptiveTrailBase(atrPct: number | null): number {
+  if (atrPct == null || atrPct <= 0) return 0.015;
+  return round(clamp(0.9 * (atrPct / 100), 0.008, 0.035), 4);
+}
+
+/**
+ * Profit-tier ratchet (only in "atr" mode): the more profit the position has
+ * seen at its peak, the tighter the leash — protect what you've earned.
+ *   peak P/L ≥ +10% → 0.55×   ≥ +6% → 0.7×   ≥ +3% → 0.85×
+ */
+function tieredTrail(base: number, entry: number, peak: number, mode: "fixed" | "atr"): number {
+  if (mode === "fixed" || entry <= 0) return base;
+  const peakPnl = (peak - entry) / entry;
+  let mult = 1;
+  if (peakPnl >= 0.1) mult = 0.55;
+  else if (peakPnl >= 0.06) mult = 0.7;
+  else if (peakPnl >= 0.03) mult = 0.85;
+  return round(Math.max(base * mult, 0.005), 4);
+}
+
+/**
+ * Advance the exit state machine by one tick (semantics per docs/离场条件.md):
  *
- *  - watching: track peak; a drawdown of >= trailPct from peak raises a
+ *  - watching: track peak; a drawdown of >= trail from peak raises a
  *    take-profit warning (target = peak*(1-trail)). If price falls below the
  *    entry price we drop into stop-loss monitoring instead.
  *  - take_profit_warn: clears once price climbs back above the target (resume
@@ -40,7 +73,8 @@ export function stepExit(
   let peak = prev?.peak ?? Math.max(entry, price);
   if (kind === "none") kind = "watching";
 
-  const trailTargetOf = (pk: number) => round(pk * (1 - cfg.trailPct), 3);
+  const trailOf = (pk: number) => tieredTrail(cfg.trailPct, entry, pk, cfg.trailMode);
+  const trailTargetOf = (pk: number) => round(pk * (1 - trailOf(pk)), 3);
   let targetPrice: number | null = null;
   let message: string | null = null;
 
@@ -85,6 +119,8 @@ export function stepExit(
       break;
   }
 
+  const effTrail = trailOf(peak);
+
   // derive display fields for the resolved state
   switch (kind) {
     case "watching":
@@ -92,7 +128,7 @@ export function stepExit(
       break;
     case "take_profit_warn":
       targetPrice = trailTargetOf(peak);
-      message = `止盈离场警告：自高点 ${round(peak, 3)} 回撤≥${(cfg.trailPct * 100).toFixed(2)}%，建议目标价≈${targetPrice}`;
+      message = `止盈离场警告：自高点 ${round(peak, 3)} 回撤≥${(effTrail * 100).toFixed(2)}%${cfg.trailMode === "atr" ? "（ATR自适应）" : ""}，建议目标价≈${targetPrice}`;
       break;
     case "stop_loss_watch":
       message = `已跌破成本价，监控止损线 ${stopLossPrice}`;
@@ -112,6 +148,10 @@ export function stepExit(
     targetPrice,
     stopLossPrice,
     pnlPct,
+    trailPct: effTrail,
+    stopLossPct: cfg.stopLossPct,
+    trailMode: cfg.trailMode,
+    acknowledged: false, // filled by the realtime loop from persisted state
     message,
     updatedAt: Date.now(),
   };

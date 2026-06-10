@@ -2,11 +2,14 @@ import type { FastifyInstance } from "fastify";
 import { config } from "../config.js";
 import { appState } from "../state.js";
 import { normalizeSymbol } from "../symbols.js";
-import { sessionElapsedFraction } from "../marketClock.js";
-import { fetchQuotes, fetchDaily, fetchFundFlow } from "../providers/index.js";
+import { getMarketClock, sessionVolumeFraction } from "../marketClock.js";
+import { fetchQuotes, fetchDaily } from "../providers/index.js";
+import { shanghaiDateIso } from "../providers/eastmoney.js";
 import { computeLayer1 } from "../indicators/layer1.js";
 import { sectorService } from "../sector/layer3.js";
+import { computeDecision } from "../decision/engine.js";
 import { stepExit } from "../exit/engine.js";
+import { effectiveExitConfig } from "../realtime/loop.js";
 import { addAnalysis, getExitRow, getPosition, listAnalyses } from "../store/db.js";
 import { STATIC_PREFIX, buildDynamicPayload } from "../ai/prompt.js";
 import { streamResponses } from "../ai/openai.js";
@@ -21,14 +24,15 @@ async function getStockForAi(symbol: Symbol): Promise<StockSnapshot | null> {
   const q = quotes.get(symbol);
   if (!q) return cur ?? null;
 
-  const daily = await fetchDaily(symbol, 60).catch(() => []);
+  const clock = getMarketClock();
+  const daily = await fetchDaily(symbol, 160).catch(() => []);
   const layer1 = computeLayer1(q, {
     daily,
-    recentPrices: [q.price],
-    elapsedFraction: sessionElapsedFraction(),
+    ticks: [{ t: Date.now(), price: q.price }],
+    volumeFraction: sessionVolumeFraction(),
+    todayIso: shanghaiDateIso(),
   });
   const sector = sectorService.getStockSector(symbol);
-  const fundFlow = (await fetchFundFlow([symbol]).catch(() => new Map())).get(symbol) ?? null;
   const position = getPosition(symbol);
   let exit = null;
   if (position) {
@@ -37,11 +41,21 @@ async function getStockForAi(symbol: Symbol): Promise<StockSnapshot | null> {
       prev ? { kind: prev.kind, peak: prev.peak } : null,
       position.entryPrice,
       q.price,
-      { trailPct: position.trailPct, stopLossPct: position.stopLossPct }
+      effectiveExitConfig(position, layer1)
     );
     st.symbol = symbol;
+    st.acknowledged = prev != null && prev.kind === st.kind && prev.ack === 1;
     exit = st;
   }
+  const decision = computeDecision({
+    quote: q,
+    layer1,
+    sector,
+    regime: appState.latestRegime,
+    position,
+    exit,
+    clock,
+  });
   return {
     symbol,
     code: symbol.slice(2),
@@ -49,8 +63,8 @@ async function getStockForAi(symbol: Symbol): Promise<StockSnapshot | null> {
     market: symbol.slice(0, 2) as StockSnapshot["market"],
     quote: q,
     layer1,
-    fundFlow,
     sector,
+    decision,
     position,
     exit,
   };

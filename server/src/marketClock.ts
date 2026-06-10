@@ -68,3 +68,48 @@ export function sessionElapsedFraction(now = new Date()): number {
   else elapsed = TOTAL;
   return Math.max(0.001, Math.min(1, elapsed / TOTAL));
 }
+
+/**
+ * Typical cumulative share of the FULL DAY's volume/amount traded by a given
+ * trading-minute, modelling the A-share U-shaped intraday profile (heavy
+ * open, quiet midday, pickup into the close). Anchors are piecewise-linear
+ * approximations of the average curve; far more accurate than a linear
+ * projection when extrapolating "today's volume vs. previous days" early in
+ * the session (a linear model overestimates relative volume ~3x at 09:45).
+ */
+const VOLUME_CURVE: [number, number][] = [
+  // [elapsed trading minutes, cumulative fraction]
+  [0, 0],
+  [5, 0.055],
+  [15, 0.12],
+  [30, 0.19],
+  [60, 0.30],
+  [90, 0.385],
+  [120, 0.46], // 11:30 morning close
+  [150, 0.55],
+  [180, 0.66], // 14:00
+  [210, 0.78], // 14:30
+  [230, 0.90],
+  [240, 1.0],
+];
+
+/** Cumulative expected volume fraction (0..1) using the U-shaped curve. */
+export function sessionVolumeFraction(now = new Date()): number {
+  const { minuteOfDay: m } = shanghaiParts(now);
+  let elapsed: number;
+  if (m < MORNING_OPEN) return 0.001;
+  else if (m < MORNING_CLOSE) elapsed = m - MORNING_OPEN;
+  else if (m < AFTERNOON_OPEN) elapsed = 120;
+  else if (m < AFTERNOON_CLOSE) elapsed = 120 + (m - AFTERNOON_OPEN);
+  else return 1;
+
+  for (let i = 1; i < VOLUME_CURVE.length; i++) {
+    const [m1, f1] = VOLUME_CURVE[i];
+    if (elapsed <= m1) {
+      const [m0, f0] = VOLUME_CURVE[i - 1];
+      const t = m1 > m0 ? (elapsed - m0) / (m1 - m0) : 1;
+      return Math.max(0.001, f0 + (f1 - f0) * t);
+    }
+  }
+  return 1;
+}

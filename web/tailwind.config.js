@@ -9,9 +9,11 @@ export default {
         // China A-share convention: red = up, green = down
         up: "#ef4444",
         down: "#22c55e",
-        panel: "#ffffff",
-        panelraised: "#f1f5f9",
-        edge: "#e2e8f0",
+        // vivid alarm red for active exit warnings (distinct from up/down semantics)
+        alarm: "#ff3b30",
+        panel: "#0f1620",
+        panelraised: "#16202c",
+        edge: "#243140",
       },
       fontFamily: {
         mono: ["ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],

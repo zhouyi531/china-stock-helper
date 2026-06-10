@@ -4,7 +4,6 @@ import { fetchSinaQuotes } from "./sina.js";
 
 export { fetchTencentDaily as fetchDaily, fetchTencentMinute as fetchMinute };
 export type { DailyBar, MinuteBar } from "./tencent.js";
-export { fetchEastMoneyFundFlow as fetchFundFlow } from "./eastmoney.js";
 
 /**
  * Fetch realtime quotes for a set of symbols.
